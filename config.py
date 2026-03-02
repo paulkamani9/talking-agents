@@ -9,5 +9,5 @@ API_KEY = "ollama" # Ollama doesnt need this, but OpenAI does. You can set it to
 
 
 # Podcast settings
-TOPIC = "The state of Artificial Intelligence in 2026. US China Competition, AI Comapnies and LLM models"
+TOPIC = "The 2027 Nigerian Presidential Election"
 MAX_TURNS = 5

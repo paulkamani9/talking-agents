@@ -1,39 +1,20 @@
 # agents.py
 
 from llm import call_llm
-from config import TOPIC
-
-# ==== System Prompts ===
-MODERATOR_PROMPT = f"""You are a podcast moderator interviewing an expert.
-Topic: {TOPIC}
-Rules:
-- Ask clear, focused questions about the topic
-- Progress from basic issues to advanced issues
-- Never repeat a question already asked in the conversation
-- Ask one question at a time
-- Keep questions short (1-2 sentences)
-- Let your questions be guided by the expert's answers, suct that there is a flow to the conversation
-- Keep your questions about the as latest as possible
-- If the convesrtion as covered the basics, move to causes, effects and solutions
-- Be friendly
-
-Respond with ONLY the question. No preamble. No "Great answer!" Just the question. 
-"""
+from prompts import MODERATOR_PROMPT, EXPERT_PROMPT
+from typing import Optional
+import re
+from dataclasses import dataclass
+import json
 
 
-EXPERT_PROMPT = f"""You are an expert being interviewed on a podcast.
+@dataclass
+class SearchDecision:
+    should_search: bool
+    reason: str
+    confidence: float
+    source: str # "hueristic" | "llm" | "fallback"
 
-Topic: {TOPIC}
-
-Rules:
-- Answer the question clearly and concisely
-- Use facts and data when available
-- If search results are provided, incorporate them into your answer
-- Keep answers to 3-5 sentences
-- Be informative but conversational
-- Feel free to use illustrations and anecdotes
-
-Respond with ONLY your answer. No "That's a great question!" Just answer."""
 
 # ==== Tool decision ===
 # this keywords trigger a web search
@@ -41,32 +22,86 @@ Respond with ONLY your answer. No "That's a great question!" Just answer."""
 SEARCH_KEYWORDS = [
     "latest", "statistics", "data", "numbers", "recent",
     "current", "how much", "how many", "percentage",
-    "trend", "year", "2024", "2025", "2026", "report",
+    "trend", "year", "2024", "2025", "2026", "factors","2027", "2028","2029","2030" "report",
                    ]
 
-def needs_search(question):
+def heuristic_needs_search(question:  str) -> bool:
     """
     Decide if the expert needs to search the web. 
     Simple keyword matching. No LLM call needed.
     """
     question_lower= question.lower()
     
-    return any(kw in question_lower for kw in SEARCH_KEYWORDS)
+    has_keyword = any(kw in question_lower for kw in SEARCH_KEYWORDS)
+    has_year = bool(re.search(r"\b20\d{2}\b", question_lower))
+    
+    return has_keyword or has_year
 
 
-def generate_search_query(question):
-     """Use the LLM to turn the moderator's question into a search query."""
-     prompt = (
-         "Convert this interview question to a concise web search query"
-         "(3-6 words). Respond with ONLY the search query, nothing else. \n\n"
-         f"Question:{question}"
-     )
-     search_query = call_llm("You generate web search queries.", prompt)
-     
-     if not search_query:
-         return "Search query not generated"
-     
-     return search_query.strip().strip("'")
+def parse_decision_json(raw:str) -> Optional[dict]:
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+def needs_search_withLLm(question, call_llm)-> SearchDecision:
+    """
+    Decide if the expert needs to search the web, with llm intuition
+    """
+    
+    if heuristic_needs_search(question):
+        return SearchDecision(
+            True, "Hueristic keyword match", 0.9, "hueristic"
+        )
+        
+    prompt = (
+        "Return Only valid JSON with keys: should_search (boolean), confidence (0-1), reason (string). \n\n"
+        "Rule: should_search=true when correctness depends on recent facts, statistics, dates,"
+        " rankings, prices, laws, elections, releases, or other time sensitive information. \n\n"
+        f"Question: {question}"
+    )
+    
+    raw = call_llm("You are a strict classifier for web search neccesity.", prompt, 0.2) or "" 
+    
+    parsed = parse_decision_json(raw.strip())
+    
+    if parsed and isinstance(parsed.get("should_search"), bool):
+        return SearchDecision(
+            confidence=parsed.get("confidence", 0.5),
+            reason=parsed.get("reason", "No reason provided"),
+            source="llm",
+            should_search=parsed["should_search"]
+        )
+    
+    
+    return SearchDecision(
+        should_search=True,
+        reason="Fallback decision: default to searching",
+        confidence=0.3,
+        source="fallback"
+    )
+
+
+
+def generate_search_query(question: str, call_llm) -> str:
+    prompt = (
+        "Return ONLY JSON: {\"query\": \"...\"}.\n"
+        "Query should be 4-10 words, specific, factual, and searchable.\n"
+        f"Question: {question}"
+    )
+    raw = call_llm("You generate web search queries.", prompt, 0.2) or ""
+
+    try:
+        data = json.loads(raw)
+        query = str(data.get("query", "")).strip()
+        if query:
+            return query
+    except Exception:
+        pass
+
+    # Fallback
+    return question.strip()[:120]
      
 
 # === Agent functions ===
@@ -80,7 +115,7 @@ def get_moderator_question(conversation_text):
             f"{conversation_text}\n\n"
             f"Ask your next question. Do not repeat any previous questions."
         )
-    return call_llm(MODERATOR_PROMPT, user_msg).strip()
+    return call_llm(MODERATOR_PROMPT, user_msg, 0.7).strip()
     
     
 def get_expert_answer(question, converstion_text, search_context=""):
@@ -99,5 +134,5 @@ def get_expert_answer(question, converstion_text, search_context=""):
          )
          
     
-     return call_llm(EXPERT_PROMPT, user_msg).strip()
+     return call_llm(EXPERT_PROMPT, user_msg, 0.7).strip()
         

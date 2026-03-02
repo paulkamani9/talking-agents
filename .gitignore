@@ -1,0 +1,4 @@
+learning
+learning/*
+.venv/
+__pycache__/

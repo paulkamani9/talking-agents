@@ -4,6 +4,7 @@ import json
 from config import MAX_TURNS, TOPIC
 from llm import call_llm
 from tools import search_web
+from prompts import EXTRACT_PROMPT
 from memory import (
     conversation,
     knowledge,
@@ -14,33 +15,14 @@ from memory import (
 from agents import (
     get_moderator_question,
     get_expert_answer,
-    needs_search,
+    needs_search_withLLm,
     generate_search_query
 )
 
 
+
 # === Knowledge extraction ===
-EXTRACT_PROMPT= """
-Extract key facts from the following text.
-Categorise each fact as excatly on of: defination, cause, effect, statistic, solution.
 
-Respond in this exact format (one fact per line):
-category: fact
-
-Example:
-defination: Fossil fuels are carbon-rich deposits formed from ancient organisms
-statistic: Coal amounts for 27 percent of global energy production
-cause: Burning fossil fuels release carbon dioxide into the atmosphere
-
-
-Rules: 
-- One fact per line
-- Use ONLY these categories: defination, cause, effect, statistic and solution
-- Keep each fact to one sentence
-- If there are no clear facts, respond with: none: 
-
-Text to extract from
-"""
 
 def extract_knowledge(answer):
       """
@@ -49,7 +31,7 @@ def extract_knowledge(answer):
     """
       response = call_llm(
         "You extrat and categorise facts from text. Follow the format exactly.",
-        EXTRACT_PROMPT + answer
+        EXTRACT_PROMPT + answer, 0.2
     )
       
       category_map = {
@@ -90,8 +72,8 @@ def run():
         
         # Step 2: Decide if search is needed
         search_context = ""
-        if needs_search(question):
-            query = generate_search_query(question)
+        if needs_search_withLLm(question, call_llm):
+            query = generate_search_query(question, call_llm)
             print(f"[Search] looking up '{query}'...")
             search_context = search_web(query)
             print(f"[Search]: found {search_context.count(chr(10))} results")
